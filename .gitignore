@@ -1,0 +1,103 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code / IDE
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+coverage.out
+cover.out
+backend-api/bin/
+backend-api/dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+ml/.venv/
+workers/.venv/
+
+# Environment / Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# Docker
+docker-compose.override.yml
+
+
+# Logs
+logs/
+*.log
+
+# Terraform (если появится)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Kubernetes (если появится)
+*.kubeconfig
+
+# Local data
+tmp/
+temp/
+data/
+uploads/
+storage/
+postgres-data/
+redis-data/
+minio-data/
+
+# Generated artifacts
+*.tar
+*.tar.gz
+*.zip
+
+# Test artifacts
+playwright-report/
+test-results/

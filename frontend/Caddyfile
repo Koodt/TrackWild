@@ -1,0 +1,8 @@
+trackwild.ru, www.trackwild.ru {
+    root * /usr/share/caddy
+    file_server
+
+    encode gzip zstd
+
+    try_files {path} /index.html
+}
