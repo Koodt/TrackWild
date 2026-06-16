@@ -1,0 +1,61 @@
+# Standalone local development compose
+# Usage: docker compose -f docker-compose.dev.yml up -d
+# Access: http://localhost (Caddy :80)
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: trackwild-db-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: trackwild
+      POSTGRES_PASSWORD: trackwild
+      POSTGRES_DB: trackwild
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trackwild -d trackwild"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+    container_name: trackwild-backend-dev
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://trackwild:trackwild@db:5432/trackwild"
+      TILE_CACHE_DIR: "/tile_cache"
+      LOG_LEVEL: debug
+      SECRET_KEY: dev-secret-not-for-production
+      ENV: development
+    volumes:
+      - tile_cache-dev:/tile_cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        CADDYFILE: Caddyfile.dev
+    container_name: trackwild-frontend-dev
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+
+volumes:
+  pgdata-dev:
+  tile_cache-dev:

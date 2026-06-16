@@ -60,6 +60,9 @@ workers/.venv/
 .env
 .env.*
 !.env.example
+deployments/.env
+deployments/.env.*
+!deployments/.env.example
 *.pem
 *.key
 *.crt
@@ -92,6 +95,9 @@ storage/
 postgres-data/
 redis-data/
 minio-data/
+
+# Backend tile cache
+backend/tile_cache/
 
 # Generated artifacts
 *.tar
