@@ -1,4 +1,5 @@
 trackwild.ru, www.trackwild.ru {
+
     root * /usr/share/caddy
     file_server
 
