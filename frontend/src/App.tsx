@@ -12,7 +12,7 @@ export default function App() {
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: 'https://demotiles.maplibre.org/style.json',
+      style: '/style.json',
       center: [31.2, 69.7],
       zoom: 5
     })
