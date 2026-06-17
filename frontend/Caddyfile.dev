@@ -2,17 +2,15 @@
 
     encode gzip zstd
 
-    # Proxy API requests to backend
-    handle_path /v1/* {
+    # Proxy API requests to backend (preserve /v1/ prefix)
+    handle /v1/* {
         reverse_proxy backend:8000
     }
 
-    # Static frontend
-    root * /usr/share/caddy
-    file_server
-
-    # SPA fallback
-    try_files {path} /index.html
-
-    # No security headers locally (HSTS breaks localhost, CSP blocks MapLibre)
+    # Static frontend + SPA fallback (only for non-API routes)
+    handle {
+        root * /usr/share/caddy
+        try_files {path} /index.html
+        file_server
+    }
 }

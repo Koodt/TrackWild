@@ -1,3 +1,4 @@
+import uuid
 from typing import Optional
 
 from sqlalchemy import select
@@ -14,19 +15,7 @@ async def get_tile(
     y: int,
     session: AsyncSession | None = None,
 ) -> Optional[bytes]:
-    """
-    Retrieve tile PNG data from database.
-
-    Args:
-        time_slot: Time slot identifier (e.g., "00", "01", ... "23")
-        z: Zoom level
-        x: Tile X coordinate
-        y: Tile Y coordinate
-        session: Optional existing session
-
-    Returns:
-        PNG bytes if found, None otherwise
-    """
+    """Retrieve tile PNG data from database."""
     query = select(Tile.png_data).where(
         Tile.time_slot == time_slot,
         Tile.zoom == z,
@@ -41,8 +30,42 @@ async def get_tile(
 
     try:
         result = await session.execute(query)
-        row = result.scalar_one_or_none()
-        return row
+        return result.scalar_one_or_none()
     finally:
         if close_session:
             await session.close()
+
+
+async def save_tile(
+    time_slot: str,
+    z: int,
+    x: int,
+    y: int,
+    png_data: bytes,
+) -> None:
+    """Insert or update a tile in the database."""
+    async with async_session_factory() as session:
+        stmt = select(Tile).where(
+            Tile.time_slot == time_slot,
+            Tile.zoom == z,
+            Tile.tile_x == x,
+            Tile.tile_y == y,
+        )
+        result = await session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.png_data = png_data
+        else:
+            session.add(
+                Tile(
+                    id=uuid.uuid4(),
+                    time_slot=time_slot,
+                    zoom=z,
+                    tile_x=x,
+                    tile_y=y,
+                    png_data=png_data,
+                )
+            )
+
+        await session.commit()

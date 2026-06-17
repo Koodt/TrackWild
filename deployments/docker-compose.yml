@@ -44,10 +44,10 @@ services:
       - frontend
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 10
+      start_period: 120s
 
   frontend:
     build:
@@ -69,6 +69,36 @@ services:
       - caddy_config:/config
     networks:
       - frontend
+
+  osm_import:
+    image: iboates/osm2pgsql:latest
+    container_name: trackwild-osm-import
+    platform: linux/amd64
+    profiles:
+      - osm-import
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ../pbf:/data/pbf:ro
+      - ../backend/scripts/osm2pgsql_style.lua:/data/style.lua:ro
+    networks:
+      - internal
+    entrypoint: >
+      osm2pgsql
+      --create
+      -H db
+      -P 5432
+      -U ${POSTGRES_USER}
+      -d ${POSTGRES_DB}
+      --slim
+      --cache 2048
+      --number-processes 4
+      -O flex
+      -S /data/style.lua
+      /data/pbf/northwestern-fed-district-latest.osm.pbf
 
 volumes:
   pgdata:

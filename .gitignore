@@ -104,6 +104,9 @@ backend/tile_cache/
 *.tar.gz
 *.zip
 
+# OSM extracts
+pbf/
+
 # Test artifacts
 playwright-report/
 test-results/
