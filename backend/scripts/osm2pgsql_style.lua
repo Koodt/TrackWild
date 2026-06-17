@@ -23,6 +23,12 @@ tables.osm_settlements = osm2pgsql.define_node_table('osm_settlements', {
     { column = 'geometry', type = 'geometry', not_null = true },
 })
 
+tables.osm_waterways = osm2pgsql.define_way_table('osm_waterways', {
+    { column = 'waterway', type = 'text' },
+    { column = 'name', type = 'text' },
+    { column = 'geometry', type = 'geometry', not_null = true },
+})
+
 -- Roads we care about
 local highway_values = {
     motorway = true, trunk = true, primary = true,
@@ -31,11 +37,22 @@ local highway_values = {
     living_street = true, service = true,
 }
 
+-- Waterways we care about
+local waterway_values = {
+    river = true, stream = true, canal = true, ditch = true,
+}
+
 -- Area features we care about
 local area_keys = {
-    landuse = { forest = true, meadow = true, grassland = true, farmland = true },
-    natural = { wood = true, scrub = true, wetland = true, heath = true },
-    leisure = { nature_reserve = true, national_park = true },
+    landuse = { forest = true, meadow = true, grassland = true, farmland = true,
+                residential = true, industrial = true, commercial = true,
+                town = true, village = true, barren = true,
+                orchard = true, vineyard = true, plant_nursery = true, cemetery = true,
+                tundra = true, reedbed = true, retail = true, construction = true },
+    natural = { wood = true, scrub = true, wetland = true, heath = true,
+                water = true, glacier = true, bare_rock = true, scree = true, sand = true,
+                tundra = true, marsh = true, bog = true, fen = true, beach = true, dune = true },
+    leisure = { nature_reserve = true, national_park = true, park = true },
 }
 
 -- Settlement types
@@ -51,6 +68,18 @@ function osm2pgsql.process_way(object)
         tables.osm_roads:insert({
             osm_id = object.id,
             highway = highway,
+            name = object:grab_tag('name'),
+            geometry = object:as_linestring(),
+        })
+        return
+    end
+
+    -- Waterways (rivers, streams, canals, ditches)
+    local waterway = object:grab_tag('waterway')
+    if waterway and waterway_values[waterway] then
+        tables.osm_waterways:insert({
+            osm_id = object.id,
+            waterway = waterway,
             name = object:grab_tag('name'),
             geometry = object:as_linestring(),
         })
