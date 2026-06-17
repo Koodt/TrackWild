@@ -32,11 +32,18 @@ services:
     environment:
       DATABASE_URL: "postgresql+asyncpg://trackwild:trackwild@db:5432/trackwild"
       TILE_CACHE_DIR: "/tile_cache"
+      RISK_PROFILES_PATH: "/app/config/risk_profiles.json"
+      TILE_WORKERS: "4"
+      PREGEN_ENABLED: "true"
+      PREGEN_Z_MIN: "5"
+      PREGEN_Z_MAX: "10"
+      PREGEN_BBOX: "28.0,65.5,42.0,71.5"
       LOG_LEVEL: debug
       SECRET_KEY: dev-secret-not-for-production
       ENV: development
     volumes:
       - tile_cache-dev:/tile_cache
+      - ../backend/config/risk_profiles.json:/app/config/risk_profiles.json:ro
 
   frontend:
     build:
