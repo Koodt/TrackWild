@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed risk profiles from config/default_risk_profiles.json."""
+"""Upsert risk profiles from config/risk_profiles.json into DB."""
 
 import asyncio
 import json
@@ -15,7 +15,11 @@ from app.models.risk_profile import RiskProfile
 
 async def seed_risk_profiles(session: AsyncSession) -> None:
     """Load and upsert risk profiles from JSON config."""
-    config_path = Path(__file__).parent.parent / "config" / "default_risk_profiles.json"
+    config_path = Path(__file__).parent.parent / "config" / "risk_profiles.json"
+    if not config_path.exists():
+        print(f"Warning: {config_path} not found, skipping seed")
+        return
+
     with open(config_path) as f:
         profiles = json.load(f)
 
@@ -30,7 +34,7 @@ async def seed_risk_profiles(session: AsyncSession) -> None:
         if existing:
             existing.base_risk = prof["base_risk"]
             existing.radius_m = prof["radius_m"]
-            existing.geometry_type = prof["geometry_type"]
+            existing.geometry_type = prof.get("geometry_type", "polygon")
         else:
             session.add(RiskProfile(
                 id=uuid.uuid4(),
@@ -38,11 +42,11 @@ async def seed_risk_profiles(session: AsyncSession) -> None:
                 value=prof["value"],
                 base_risk=prof["base_risk"],
                 radius_m=prof["radius_m"],
-                geometry_type=prof["geometry_type"],
+                geometry_type=prof.get("geometry_type", "polygon"),
             ))
 
     await session.commit()
-    print(f"Seeded {len(profiles)} risk profiles")
+    print(f"Upserted {len(profiles)} risk profiles")
 
 
 async def seed() -> None:

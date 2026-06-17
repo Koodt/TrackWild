@@ -1,11 +1,9 @@
 """Real tile generation from OSM data via PostGIS rasterization.
 
 Workflow:
-1. Fetch all OSM features overlapping the tile bbox (no risk_profiles JOIN).
-2. Apply risk coefficients from external JSON (risk_config).
-3. Buffer lines/points by radius_m from risk_config.
-4. Rasterize in Python with max-merge.
-5. Apply green→yellow→red colormap with transparency on zero risk.
+1. Fetch all OSM features overlapping the tile bbox.
+2. PostGIS applies ST_Buffer and risk coefficients (risk passed as JSON parameter).
+3. Python only rasterize the returned geometries (no Shapely needed).
 
 Risk profiles are read from /app/config/risk_profiles.json (Docker volume),
 allowing changes without container rebuild.
@@ -38,44 +36,73 @@ TIME_MULTIPLIERS: dict[str, float] = {
 
 
 # ---------------------------------------------------------------------------
-# SQL: fetch all OSM features overlapping the tile bbox (no risk_profiles JOIN)
+# SQL: fetch features + apply risk + buffer in PostGIS (no Shapely needed)
 # ---------------------------------------------------------------------------
 _TILE_FEATURES_SQL = text("""
 WITH
 tile_env AS (
-    SELECT ST_MakeEnvelope(:left, :bottom, :right, :top, 3857) AS env3857
+    SELECT ST_MakeEnvelope(:left, :bottom, :right, :top, 3857) AS env3857,
+           ST_Transform(ST_MakeEnvelope(:left, :bottom, :right, :top, 3857), 4326) AS env4326
 ),
 roads AS (
     SELECT
-        ST_Transform(r.geometry, 3857) AS geom,
-        r.highway AS feature_value
+        CASE WHEN rp.radius_m > 0
+            THEN ST_Buffer(ST_Transform(r.geometry, 3857), rp.radius_m)
+            ELSE ST_Transform(r.geometry, 3857)
+        END AS geom,
+        rp.base_risk AS risk
     FROM osm_roads r
-    WHERE ST_Intersects(ST_Transform(r.geometry, 3857), (SELECT env3857 FROM tile_env))
+    JOIN risk_profiles rp ON rp.key = 'highway' AND rp.value = r.highway
+    WHERE ST_Intersects(r.geometry, (SELECT env4326 FROM tile_env))
 ),
 areas AS (
     SELECT
         ST_Transform(a.geometry, 3857) AS geom,
-        a.feature_value AS feature_value,
-        a.feature_key AS feature_key
+        rp.base_risk AS risk
     FROM osm_areas a
-    WHERE ST_Intersects(ST_Transform(a.geometry, 3857), (SELECT env3857 FROM tile_env))
+    JOIN risk_profiles rp ON rp.key = a.feature_key AND rp.value = a.feature_value
+    WHERE ST_Intersects(a.geometry, (SELECT env4326 FROM tile_env))
 ),
 settlements AS (
     SELECT
-        ST_Transform(s.geometry, 3857) AS geom,
-        s.place AS feature_value
+        CASE WHEN rp.radius_m > 0
+            THEN ST_Buffer(ST_Transform(s.geometry, 3857), rp.radius_m)
+            ELSE ST_Transform(s.geometry, 3857)
+        END AS geom,
+        rp.base_risk AS risk
     FROM osm_settlements s
-    WHERE ST_Intersects(ST_Transform(s.geometry, 3857), (SELECT env3857 FROM tile_env))
+    JOIN risk_profiles rp ON rp.key = 'place' AND rp.value = s.place
+    WHERE ST_Intersects(s.geometry, (SELECT env4326 FROM tile_env))
+),
+waterways AS (
+    SELECT
+        CASE WHEN rp.radius_m > 0
+            THEN ST_Buffer(ST_Transform(w.geometry, 3857), rp.radius_m)
+            ELSE ST_Transform(w.geometry, 3857)
+        END AS geom,
+        rp.base_risk AS risk
+    FROM osm_waterways w
+    JOIN risk_profiles rp ON rp.key = 'waterway' AND rp.value = w.waterway
+    WHERE ST_Intersects(w.geometry, (SELECT env4326 FROM tile_env))
 ),
 combined AS (
-    SELECT geom, 'highway' AS feature_key, feature_value FROM roads
+    SELECT geom, risk FROM roads
     UNION ALL
-    SELECT geom, feature_key, feature_value FROM areas
+    SELECT geom, risk FROM areas
     UNION ALL
-    SELECT geom, 'place' AS feature_key, feature_value FROM settlements
+    SELECT geom, risk FROM settlements
+    UNION ALL
+    SELECT geom, risk FROM waterways
+),
+grouped AS (
+    SELECT ST_Union(geom) AS geom, risk
+    FROM combined
+    WHERE geom IS NOT NULL
+      AND NOT ST_IsEmpty(geom)
+    GROUP BY risk
 )
-SELECT ST_AsGeoJSON(geom) AS geojson, feature_key, feature_value
-FROM combined
+SELECT ST_AsGeoJSON(geom) AS geojson, risk
+FROM grouped
 WHERE geom IS NOT NULL
   AND NOT ST_IsEmpty(geom)
 """)
@@ -108,7 +135,8 @@ def _rasterize_max(
     """Rasterize GeoJSON shapes with suppressor support.
 
     1. Rasterize positive shapes with max-merge (higher risk wins).
-    2. Rasterize negative shapes as a mask — zero out risk where infrastructure is.
+    2. Rasterize negative shapes as suppressors — reduce risk, don't zero out.
+    3. final_risk = max(0, positive_risk - suppress_risk)
     """
     out = np.zeros((TILE_SIZE, TILE_SIZE), dtype=np.float32)
 
@@ -124,63 +152,46 @@ def _rasterize_max(
             all_touched=True,
         )
 
-    # Step 2: negative mask — zero out risk where suppressors exist
+    # Step 2: suppressors — reduce risk, don't zero out
     if negative_shapes:
-        mask = rasterize(
-            zip((s[0] for s in negative_shapes), (1 for _ in negative_shapes)),
+        suppress = rasterize(
+            zip((s[0] for s in negative_shapes), (s[1] for s in negative_shapes)),
             out_shape=(TILE_SIZE, TILE_SIZE),
-            fill=0,
-            dtype=np.uint8,
-            all_touched=True,
             transform=transform,
+            fill=0.0,
+            dtype=np.float32,
+            all_touched=True,
         )
-        out[mask > 0] = 0.0
+        out = np.clip(out - suppress, 0.0, None)
 
     return out
 
 
 def _apply_risk_to_features(
     geojson_shapes: list[dict],
-    feature_keys: list[str],
-    feature_values: list[str],
+    risks: list[float],
     time_slot: str,
 ) -> tuple[list[tuple[dict, float]], list[tuple[dict, float]]]:
-    """Apply risk coefficients from external JSON config to raw OSM features.
+    """Apply time multiplier to risks.
 
-    Returns (positive_shapes, negative_shapes) with buffering already applied.
-    Positive shapes add risk; negative shapes zero it out (suppressors).
+    PostGIS already did the buffering, so we only apply the time multiplier
+    and split into positive/negative lists. No Shapely needed.
+
+    Returns:
+        (positive_shapes, negative_shapes)
     """
-    from shapely.geometry import shape, mapping
-
-    lookup = risk_config.get_lookup()
     mult = TIME_MULTIPLIERS.get(time_slot, 1.0)
 
     positive: list[tuple[dict, float]] = []
     negative: list[tuple[dict, float]] = []
 
-    for geojson, fkey, fval in zip(geojson_shapes, feature_keys, feature_values):
-        profile = lookup.get((fkey, fval))
-        if profile is None:
-            continue
-
-        base_risk = float(profile["base_risk"])
-        radius_m = int(profile["radius_m"])
-        geom = shape(geojson)
-
-        if radius_m > 0:
-            # Fast buffer: cap=flat, join=bevel, low precision = 10x faster
-            geom = geom.buffer(radius_m, quad_segs=2)
-
-        if geom.is_empty or not geom.is_valid:
-            continue
-
+    for geojson, base_risk in zip(geojson_shapes, risks):
         risk = min(abs(base_risk) * mult, 1.0)
-        gjson = mapping(geom)
 
         if base_risk < 0:
-            negative.append((gjson, risk))
+            negative.append((geojson, risk))
         else:
-            positive.append((gjson, risk))
+            positive.append((geojson, risk))
 
     return positive, negative
 
@@ -192,7 +203,7 @@ def _colormap(risk: np.ndarray) -> np.ndarray:
     rgba[0] = (np.clip(v * 2, 0, 1) * 255).astype(np.uint8)   # red
     rgba[1] = (np.clip(2 - v * 2, 0, 1) * 255).astype(np.uint8)  # green
     rgba[2] = 0                                                   # blue
-    rgba[3] = (v > 0.05).astype(np.uint8) * 255                  # alpha
+    rgba[3] = (v > 0.15).astype(np.uint8) * 255                 # alpha — only draw if risk > 15%
     return rgba
 
 
@@ -271,13 +282,11 @@ async def generate_osm_tile_png(
             None, _to_png, _empty_rgba(), transform
         )
 
-    # Parse features and apply risk from external config
+    # Parse features — SQL already applied risk and buffer
     geojson_shapes = [json.loads(row["geojson"]) for row in rows]
-    feature_keys = [row["feature_key"] for row in rows]
-    feature_values = [row["feature_value"] for row in rows]
+    risks = [float(row["risk"]) for row in rows]
 
-    shapes = _apply_risk_to_features(geojson_shapes, feature_keys, feature_values, time_slot)
-    positive_shapes, negative_shapes = shapes
+    positive_shapes, negative_shapes = _apply_risk_to_features(geojson_shapes, risks, time_slot)
 
     loop = asyncio.get_running_loop()
     raster = await loop.run_in_executor(
