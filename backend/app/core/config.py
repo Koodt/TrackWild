@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     tile_workers: int = 2
     pregen_enabled: bool = True
     pregen_z_min: int = 5
-    pregen_z_max: int = 10
+    pregen_z_max: int = 7
     # Bbox for NW Federal District in EPSG:4326 (min_lon, min_lat, max_lon, max_lat)
     pregen_bbox: str = "28.0,65.5,42.0,71.5"
     # Stale tile re-generation
