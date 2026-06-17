@@ -36,12 +36,6 @@ services:
       ENV: development
     volumes:
       - tile_cache-dev:/tile_cache
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   frontend:
     build:
@@ -50,11 +44,36 @@ services:
         CADDYFILE: Caddyfile.dev
     container_name: trackwild-frontend-dev
     restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_healthy
     ports:
       - "80:80"
+
+  osm_import:
+    image: iboates/osm2pgsql:latest
+    container_name: trackwild-osm-import-dev
+    platform: linux/amd64
+    profiles:
+      - osm-import
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: trackwild
+    volumes:
+      - ../pbf:/data/pbf:ro
+      - ../backend/scripts/osm2pgsql_style.lua:/data/style.lua:ro
+    entrypoint: >
+      osm2pgsql
+      --create
+      -H db
+      -P 5432
+      -U trackwild
+      -d trackwild
+      --slim
+      --cache 2048
+      --number-processes 2
+      -O flex
+      -S /data/style.lua
+      /data/pbf/northwestern-fed-district-latest.osm.pbf
 
 volumes:
   pgdata-dev:

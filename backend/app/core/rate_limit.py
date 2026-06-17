@@ -3,9 +3,8 @@ import time
 from collections import defaultdict
 from typing import Any
 
-from fastapi import Request, HTTPException
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import Receive, Scope, Send
 
 
 class RateLimiter:
@@ -53,7 +52,8 @@ class RateLimiter:
         return True
 
 
-tile_rate_limiter = RateLimiter(max_requests=120, window_seconds=60)
+# 600 tile requests per minute — MapLibre sends ~20-30 per pan, 120 was too low
+tile_rate_limiter = RateLimiter(max_requests=600, window_seconds=60)
 
 
 class TileRateLimitMiddleware(BaseHTTPMiddleware):
@@ -63,14 +63,19 @@ class TileRateLimitMiddleware(BaseHTTPMiddleware):
         if not request.url.path.startswith("/v1/tiles/"):
             return await call_next(request)
 
-        client_ip = request.headers.get(
-            "x-forwarded-for", request.client.host if request.client else "unknown"
-        ).split(",")[0].strip()
+        # Skip rate limiting for internal/proxy requests (no X-Forwarded-For)
+        forwarded = request.headers.get("x-forwarded-for", "").strip()
+        if forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+        else:
+            # Direct request — no proxy, use client host but with higher tolerance
+            return await call_next(request)
 
         if not tile_rate_limiter.is_allowed(client_ip):
-            raise HTTPException(
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
                 status_code=429,
-                detail="Too many requests",
+                content={"detail": "Too many requests"},
                 headers={"Retry-After": "60"},
             )
 

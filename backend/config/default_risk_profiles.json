@@ -1,0 +1,142 @@
+[
+  {
+    "key": "highway",
+    "value": "motorway",
+    "base_risk": 0.1,
+    "radius_m": 200,
+    "geometry_type": "line"
+  },
+  {
+    "key": "highway",
+    "value": "trunk",
+    "base_risk": 0.2,
+    "radius_m": 300,
+    "geometry_type": "line"
+  },
+  {
+    "key": "highway",
+    "value": "primary",
+    "base_risk": 0.3,
+    "radius_m": 400,
+    "geometry_type": "line"
+  },
+  {
+    "key": "highway",
+    "value": "secondary",
+    "base_risk": 0.4,
+    "radius_m": 500,
+    "geometry_type": "line"
+  },
+  {
+    "key": "highway",
+    "value": "tertiary",
+    "base_risk": 0.5,
+    "radius_m": 600,
+    "geometry_type": "line"
+  },
+  {
+    "key": "highway",
+    "value": "residential",
+    "base_risk": 0.3,
+    "radius_m": 300,
+    "geometry_type": "line"
+  },
+  {
+    "key": "highway",
+    "value": "track",
+    "base_risk": 0.8,
+    "radius_m": 1000,
+    "geometry_type": "line"
+  },
+  {
+    "key": "highway",
+    "value": "path",
+    "base_risk": 0.9,
+    "radius_m": 1200,
+    "geometry_type": "line"
+  },
+  {
+    "key": "highway",
+    "value": "unclassified",
+    "base_risk": 0.5,
+    "radius_m": 600,
+    "geometry_type": "line"
+  },
+  {
+    "key": "highway",
+    "value": "living_street",
+    "base_risk": 0.3,
+    "radius_m": 300,
+    "geometry_type": "line"
+  },
+  {
+    "key": "landuse",
+    "value": "forest",
+    "base_risk": 0.6,
+    "radius_m": 0,
+    "geometry_type": "polygon"
+  },
+  {
+    "key": "landuse",
+    "value": "meadow",
+    "base_risk": 0.4,
+    "radius_m": 0,
+    "geometry_type": "polygon"
+  },
+  {
+    "key": "landuse",
+    "value": "grassland",
+    "base_risk": 0.4,
+    "radius_m": 0,
+    "geometry_type": "polygon"
+  },
+  {
+    "key": "natural",
+    "value": "wood",
+    "base_risk": 0.6,
+    "radius_m": 0,
+    "geometry_type": "polygon"
+  },
+  {
+    "key": "natural",
+    "value": "scrub",
+    "base_risk": 0.5,
+    "radius_m": 0,
+    "geometry_type": "polygon"
+  },
+  {
+    "key": "leisure",
+    "value": "nature_reserve",
+    "base_risk": 0.9,
+    "radius_m": 0,
+    "geometry_type": "polygon"
+  },
+  {
+    "key": "leisure",
+    "value": "national_park",
+    "base_risk": 0.8,
+    "radius_m": 0,
+    "geometry_type": "polygon"
+  },
+  {
+    "key": "place",
+    "value": "village",
+    "base_risk": 0.2,
+    "radius_m": 200,
+    "geometry_type": "point"
+  },
+  {
+    "key": "place",
+    "value": "town",
+    "base_risk": 0.1,
+    "radius_m": 100,
+    "geometry_type": "point"
+  },
+  {
+    "key": "place",
+    "value": "city",
+    "base_risk": 0.05,
+    "radius_m": 50,
+    "geometry_type": "point"
+  }
+]
