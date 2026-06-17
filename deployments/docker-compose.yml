@@ -35,11 +35,18 @@ services:
     environment:
       DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
       TILE_CACHE_DIR: "/tile_cache"
+      RISK_PROFILES_PATH: "/app/config/risk_profiles.json"
+      TILE_WORKERS: ${TILE_WORKERS:-8}
+      PREGEN_ENABLED: ${PREGEN_ENABLED:-true}
+      PREGEN_Z_MIN: ${PREGEN_Z_MIN:-5}
+      PREGEN_Z_MAX: ${PREGEN_Z_MAX:-10}
+      PREGEN_BBOX: ${PREGEN_BBOX:-"28.0,65.5,42.0,71.5"}
       LOG_LEVEL: ${LOG_LEVEL}
       SECRET_KEY: ${SECRET_KEY}
       ENV: production
     volumes:
       - tile_cache:/tile_cache
+      - ../backend/config/risk_profiles.json:/app/config/risk_profiles.json:ro
     networks:
       - internal
       - frontend

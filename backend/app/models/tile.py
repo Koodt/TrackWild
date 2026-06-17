@@ -21,6 +21,10 @@ class Tile(Base):
     tile_x: Mapped[int] = mapped_column(Integer, nullable=False)
     tile_y: Mapped[int] = mapped_column(Integer, nullable=False)
     png_data: Mapped[bytes] = mapped_column(nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

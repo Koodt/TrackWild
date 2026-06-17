@@ -9,6 +9,7 @@ from app.api.v1.router import router as v1_router
 from app.core.config import settings
 from app.core.database import engine, on_startup as db_on_startup
 from app.core.rate_limit import TileRateLimitMiddleware, tile_rate_limiter
+from app.services.tile_worker import start_worker, stop_worker
 
 
 @asynccontextmanager
@@ -16,7 +17,9 @@ async def lifespan(app: FastAPI) -> Any:
     """Application lifespan events."""
     await db_on_startup()
     await tile_rate_limiter.start()
+    start_worker()
     yield
+    stop_worker()
     await tile_rate_limiter.stop()
     await engine.dispose()
 
@@ -44,7 +47,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 

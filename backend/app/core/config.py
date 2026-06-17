@@ -17,10 +17,23 @@ def json_or_list(value: str | list[str]) -> list[str]:
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/trackwild"
     tile_cache_dir: str = "/tile_cache"
+    risk_profiles_path: str = "/app/config/risk_profiles.json"
     log_level: str = "info"
     cors_origins: list[str] = ["https://trackwild.ru", "https://www.trackwild.ru"]
     secret_key: str = "change-me"
     env: str = "production"
+
+    # Pre-generation settings
+    tile_workers: int = 2
+    pregen_enabled: bool = True
+    pregen_z_min: int = 5
+    pregen_z_max: int = 7
+    # Bbox for NW Federal District in EPSG:4326 (min_lon, min_lat, max_lon, max_lat)
+    pregen_bbox: str = "28.0,65.5,42.0,71.5"
+    # Stale tile re-generation
+    pregen_ttl_hours: int = 24
+    pregen_stale_check_seconds: int = 300
+    pregen_stale_batch: int = 50
 
     model_config = SettingsConfigDict(
         env_file=".env",

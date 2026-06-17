@@ -46,12 +46,12 @@ async def save_tile(
     """Insert or update a tile in the database (race-safe via ON CONFLICT)."""
     async with async_session_factory() as session:
         await session.execute(
-            text("""
-                INSERT INTO tiles (id, time_slot, zoom, tile_x, tile_y, png_data)
-                VALUES (:id, :time_slot, :zoom, :tile_x, :tile_y, :png_data)
-                ON CONFLICT (time_slot, zoom, tile_x, tile_y)
-                DO UPDATE SET png_data = EXCLUDED.png_data
-            """"),
+            text(
+                "INSERT INTO tiles (id, time_slot, zoom, tile_x, tile_y, png_data, generated_at) "
+                "VALUES (:id, :time_slot, :zoom, :tile_x, :tile_y, :png_data, now()) "
+                "ON CONFLICT (time_slot, zoom, tile_x, tile_y) "
+                "DO UPDATE SET png_data = EXCLUDED.png_data, generated_at = now()"
+            ),
             {
                 "id": str(uuid.uuid4()),
                 "time_slot": time_slot,
@@ -62,3 +62,18 @@ async def save_tile(
             },
         )
         await session.commit()
+
+
+async def find_stale_tiles(ttl_hours: int = 24, limit: int = 100) -> list[tuple[str, int, int, int]]:
+    """Return (time_slot, z, x, y) for tiles older than ttl_hours."""
+    async with async_session_factory() as session:
+        result = await session.execute(
+            text(
+                "SELECT time_slot, zoom, tile_x, tile_y "
+                "FROM tiles "
+                "WHERE generated_at < now() - (:ttl * interval '1 hour') "
+                "LIMIT :limit"
+            ),
+            {"ttl": ttl_hours, "limit": limit},
+        )
+        return [(r["time_slot"], r["zoom"], r["tile_x"], r["tile_y"]) for r in result.mappings()]

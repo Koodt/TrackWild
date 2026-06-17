@@ -1,0 +1,36 @@
+[
+  {"key": "highway", "value": "motorway", "base_risk": -0.9, "radius_m": 500},
+  {"key": "highway", "value": "trunk", "base_risk": -0.7, "radius_m": 400},
+  {"key": "highway", "value": "primary", "base_risk": -0.5, "radius_m": 300},
+  {"key": "highway", "value": "secondary", "base_risk": -0.3, "radius_m": 200},
+  {"key": "highway", "value": "tertiary", "base_risk": -0.2, "radius_m": 150},
+  {"key": "highway", "value": "residential", "base_risk": -0.4, "radius_m": 200},
+  {"key": "highway", "value": "living_street", "base_risk": -0.3, "radius_m": 150},
+  {"key": "highway", "value": "unclassified", "base_risk": -0.1, "radius_m": 100},
+  {"key": "highway", "value": "track", "base_risk": 0.5, "radius_m": 200},
+  {"key": "highway", "value": "path", "base_risk": 0.7, "radius_m": 300},
+
+  {"key": "landuse", "value": "forest", "base_risk": 0.7, "radius_m": 0},
+  {"key": "landuse", "value": "meadow", "base_risk": 0.4, "radius_m": 0},
+  {"key": "landuse", "value": "grassland", "base_risk": 0.4, "radius_m": 0},
+  {"key": "landuse", "value": "residential", "base_risk": -0.6, "radius_m": 0},
+  {"key": "landuse", "value": "industrial", "base_risk": -0.7, "radius_m": 0},
+  {"key": "landuse", "value": "commercial", "base_risk": -0.6, "radius_m": 0},
+  {"key": "landuse", "value": "town", "base_risk": -0.5, "radius_m": 0},
+  {"key": "landuse", "value": "village", "base_risk": -0.3, "radius_m": 0},
+
+  {"key": "natural", "value": "wood", "base_risk": 0.7, "radius_m": 0},
+  {"key": "natural", "value": "scrub", "base_risk": 0.5, "radius_m": 0},
+  {"key": "natural", "value": "water", "base_risk": 0.1, "radius_m": 0},
+  {"key": "natural", "value": "wetland", "base_risk": 0.6, "radius_m": 0},
+  {"key": "natural", "value": "glacier", "base_risk": 0.3, "radius_m": 0},
+  {"key": "natural", "value": "heath", "base_risk": 0.5, "radius_m": 0},
+
+  {"key": "leisure", "value": "nature_reserve", "base_risk": 0.9, "radius_m": 0},
+  {"key": "leisure", "value": "national_park", "base_risk": 0.8, "radius_m": 0},
+  {"key": "leisure", "value": "park", "base_risk": -0.2, "radius_m": 0},
+
+  {"key": "place", "value": "city", "base_risk": -0.8, "radius_m": 5000},
+  {"key": "place", "value": "town", "base_risk": -0.5, "radius_m": 3000},
+  {"key": "place", "value": "village", "base_risk": -0.2, "radius_m": 1000}
+]
