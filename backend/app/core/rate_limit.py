@@ -65,10 +65,13 @@ class TileRateLimitMiddleware(BaseHTTPMiddleware):
 
         # Skip rate limiting for internal/proxy requests (no X-Forwarded-For)
         forwarded = request.headers.get("x-forwarded-for", "").strip()
-        if forwarded:
-            client_ip = forwarded.split(",")[0].strip()
-        else:
-            # Direct request — no proxy, use client host but with higher tolerance
+        if not forwarded:
+            return await call_next(request)
+
+        client_ip = forwarded.split(",")[0].strip()
+
+        # Skip rate limiting for internal networks (Docker, LAN)
+        if client_ip.startswith(("10.", "172.", "192.168.", "127.")):
             return await call_next(request)
 
         if not tile_rate_limiter.is_allowed(client_ip):
