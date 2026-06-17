@@ -61,17 +61,17 @@ services:
     build:
       context: ../frontend
       args:
-        CADDYFILE: Caddyfile.prod
+        CADDYFILE: ${CADDYFILE:-Caddyfile.prod}
     container_name: trackwild-frontend
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:-trackwild.ru}
     ports:
       - "443:443"
       - "80:80"
-    environment:
-      DOMAIN: trackwild.ru
     volumes:
       - caddy_data:/data
       - caddy_config:/config

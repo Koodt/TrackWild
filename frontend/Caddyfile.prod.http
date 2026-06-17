@@ -1,0 +1,26 @@
+:80 {
+
+    encode gzip zstd
+
+    # Proxy API requests to backend (preserve /v1/ prefix)
+    handle /v1/* {
+        reverse_proxy backend:8000
+    }
+
+    # Static frontend + SPA fallback
+    handle {
+        root * /usr/share/caddy
+        try_files {path} /index.html
+        file_server
+
+        header {
+            X-Frame-Options "DENY"
+            X-Content-Type-Options "nosniff"
+            X-XSS-Protection "1; mode=block"
+            Referrer-Policy "strict-origin-when-cross-origin"
+            Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://trackwild.ru https://*.tile.openstreetmap.org;"
+            Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        }
+        header -Server
+    }
+}
