@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_factory
@@ -43,29 +43,22 @@ async def save_tile(
     y: int,
     png_data: bytes,
 ) -> None:
-    """Insert or update a tile in the database."""
+    """Insert or update a tile in the database (race-safe via ON CONFLICT)."""
     async with async_session_factory() as session:
-        stmt = select(Tile).where(
-            Tile.time_slot == time_slot,
-            Tile.zoom == z,
-            Tile.tile_x == x,
-            Tile.tile_y == y,
+        await session.execute(
+            text("""
+                INSERT INTO tiles (id, time_slot, zoom, tile_x, tile_y, png_data)
+                VALUES (:id, :time_slot, :zoom, :tile_x, :tile_y, :png_data)
+                ON CONFLICT (time_slot, zoom, tile_x, tile_y)
+                DO UPDATE SET png_data = EXCLUDED.png_data
+            """"),
+            {
+                "id": str(uuid.uuid4()),
+                "time_slot": time_slot,
+                "zoom": z,
+                "tile_x": x,
+                "tile_y": y,
+                "png_data": png_data,
+            },
         )
-        result = await session.execute(stmt)
-        existing = result.scalar_one_or_none()
-
-        if existing:
-            existing.png_data = png_data
-        else:
-            session.add(
-                Tile(
-                    id=uuid.uuid4(),
-                    time_slot=time_slot,
-                    zoom=z,
-                    tile_x=x,
-                    tile_y=y,
-                    png_data=png_data,
-                )
-            )
-
         await session.commit()

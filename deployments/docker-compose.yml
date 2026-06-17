@@ -5,6 +5,7 @@ services:
     image: postgis/postgis:16-3.4
     container_name: trackwild-db
     restart: unless-stopped
+    shm_size: "512mb"
     env_file:
       - .env
     environment:
