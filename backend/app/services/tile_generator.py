@@ -41,49 +41,47 @@ TIME_MULTIPLIERS: dict[str, float] = {
 _TILE_FEATURES_SQL = text("""
 WITH
 tile_env AS (
-    SELECT ST_MakeEnvelope(:left, :bottom, :right, :top, 3857) AS env3857,
-           ST_Transform(ST_MakeEnvelope(:left, :bottom, :right, :top, 3857), 4326) AS env4326
+    SELECT ST_MakeEnvelope(:left, :bottom, :right, :top, 3857) AS env
 ),
 roads AS (
     SELECT
         CASE WHEN rp.radius_m > 0
-            THEN ST_Buffer(ST_Transform(r.geometry, 3857), rp.radius_m)
-            ELSE ST_Transform(r.geometry, 3857)
+            THEN ST_Buffer(r.geometry, rp.radius_m)
+            ELSE r.geometry
         END AS geom,
         rp.base_risk AS risk
     FROM osm_roads r
     JOIN risk_profiles rp ON rp.key = 'highway' AND rp.value = r.highway
-    WHERE ST_Intersects(r.geometry, (SELECT env4326 FROM tile_env))
+    WHERE ST_Intersects(r.geometry, (SELECT env FROM tile_env))
 ),
 areas AS (
-    SELECT
-        ST_Transform(a.geometry, 3857) AS geom,
+    SELECT a.geometry AS geom,
         rp.base_risk AS risk
     FROM osm_areas a
     JOIN risk_profiles rp ON rp.key = a.feature_key AND rp.value = a.feature_value
-    WHERE ST_Intersects(a.geometry, (SELECT env4326 FROM tile_env))
+    WHERE ST_Intersects(a.geometry, (SELECT env FROM tile_env))
 ),
 settlements AS (
     SELECT
         CASE WHEN rp.radius_m > 0
-            THEN ST_Buffer(ST_Transform(s.geometry, 3857), rp.radius_m)
-            ELSE ST_Transform(s.geometry, 3857)
+            THEN ST_Buffer(s.geometry, rp.radius_m)
+            ELSE s.geometry
         END AS geom,
         rp.base_risk AS risk
     FROM osm_settlements s
     JOIN risk_profiles rp ON rp.key = 'place' AND rp.value = s.place
-    WHERE ST_Intersects(s.geometry, (SELECT env4326 FROM tile_env))
+    WHERE ST_Intersects(s.geometry, (SELECT env FROM tile_env))
 ),
 waterways AS (
     SELECT
         CASE WHEN rp.radius_m > 0
-            THEN ST_Buffer(ST_Transform(w.geometry, 3857), rp.radius_m)
-            ELSE ST_Transform(w.geometry, 3857)
+            THEN ST_Buffer(w.geometry, rp.radius_m)
+            ELSE w.geometry
         END AS geom,
         rp.base_risk AS risk
     FROM osm_waterways w
     JOIN risk_profiles rp ON rp.key = 'waterway' AND rp.value = w.waterway
-    WHERE ST_Intersects(w.geometry, (SELECT env4326 FROM tile_env))
+    WHERE ST_Intersects(w.geometry, (SELECT env FROM tile_env))
 ),
 combined AS (
     SELECT geom, risk FROM roads

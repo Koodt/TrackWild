@@ -1,10 +1,16 @@
 import asyncio
+import logging
 import time
 from collections import defaultdict
 from typing import Any
 
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class RateLimiter:
@@ -47,24 +53,32 @@ class RateLimiter:
             t for t in self.requests.get(key, []) if t > cutoff
         ]
         if len(self.requests[key]) >= self.max_requests:
+            logger.debug("Rate limit exceeded for %s (%d/%d)", key, len(self.requests[key]), self.max_requests)
             return False
         self.requests[key].append(now)
         return True
 
 
-# 600 tile requests per minute — MapLibre sends ~20-30 per pan, 120 was too low
-tile_rate_limiter = RateLimiter(max_requests=600, window_seconds=60)
+# 2000 tile requests per minute for production
+tile_rate_limiter = RateLimiter(max_requests=2000, window_seconds=60)
 
 
 class TileRateLimitMiddleware(BaseHTTPMiddleware):
-    """Rate limit tile requests to prevent abuse."""
+    """Rate limit tile requests to prevent abuse.
+
+    Disabled entirely in development mode (ENV=development) — all traffic
+    comes through the reverse proxy, making IP-based limiting useless.
+    """
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:
+        # Skip rate limiting in development
+        if settings.env == "development":
+            return await call_next(request)
+
         if not request.url.path.startswith("/v1/tiles/"):
             return await call_next(request)
 
-        # Skip rate limiting for internal/proxy requests (no X-Forwarded-For)
-        forwarded = request.headers.get("x-forwarded-for", "").strip()
+        forwarded = request.headers.get("x-forwarded-for", "")
         if not forwarded:
             return await call_next(request)
 
@@ -75,7 +89,6 @@ class TileRateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if not tile_rate_limiter.is_allowed(client_ip):
-            from fastapi.responses import JSONResponse
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too many requests"},
