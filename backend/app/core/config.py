@@ -47,6 +47,17 @@ class Settings(BaseSettings):
     def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
         return json_or_list(v)
 
+    @field_validator("secret_key")
+    @classmethod
+    def validate_secret_key(cls, v: str) -> str:
+        insecure = {"change-me", "dev-secret-not-for-production", "secret", ""}
+        if v.lower() in insecure:
+            raise ValueError(
+                f"SECRET_KEY is set to insecure default '{v}'. "
+                "Generate a strong key: python -c 'import secrets; print(secrets.token_hex(32))'"
+            )
+        return v
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
