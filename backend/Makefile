@@ -53,23 +53,17 @@ queue-status: ## Tile queue status (ondemand/pregen/pending)
 
 queue-redis: ## Raw Redis stream info (pending messages, consumers, length)
 	@echo "=== On-demand stream ===" && \
-	$(REDIS) redis-cli XINFO STREAM tw:tile:stream:ondemand 2>/dev/null || echo "Stream empty or not created yet" && \
+	$(REDIS) redis-cli -a devredis --no-auth-warning XINFO STREAM tw:tile:stream:ondemand 2>/dev/null || echo "Stream empty or not created yet" && \
 	echo "" && echo "=== Pregen stream ===" && \
-	$(REDIS) redis-cli XINFO STREAM tw:tile:stream:pregen 2>/dev/null || echo "Stream empty or not created yet" && \
+	$(REDIS) redis-cli -a devredis --no-auth-warning XINFO STREAM tw:tile:stream:pregen 2>/dev/null || echo "Stream empty or not created yet" && \
 	echo "" && echo "=== Pending dedup set ===" && \
-	$(REDIS) redis-cli SCARD tw:tile:pending 2>/dev/null || echo "0" && \
-	echo "" && echo "=== Pregen layer counters ===" && \
-	$(REDIS) redis-cli KEYS "tw:tile:pregen:layer:*" 2>/dev/null | while read k; do echo "$$k = $$(redis-cli GET $$k)"; done || echo "No layer counters"
+	$(REDIS) redis-cli -a devredis --no-auth-warning SCARD tw:tile:pending 2>/dev/null || echo "0"
 
 queue-stats: ## Detailed consumer group stats (inflight, idle, etc.)
 	@echo "=== On-demand consumers ===" && \
-	$(REDIS) redis-cli XINFO CONSUMERS tw:tile:stream:ondemand tile-workers 2>/dev/null || echo "No consumers" && \
+	$(REDIS) redis-cli -a devredis --no-auth-warning XINFO CONSUMERS tw:tile:stream:ondemand tile-workers 2>/dev/null || echo "No consumers" && \
 	echo "" && echo "=== Pregen consumers ===" && \
-	$(REDIS) redis-cli XINFO CONSUMERS tw:tile:stream:pregen tile-workers 2>/dev/null || echo "No consumers" && \
-	echo "" && echo "=== On-demand pending ===" && \
-	$(REDIS) redis-cli XPENDING tw:tile:stream:ondemand tile-workers 2>/dev/null || echo "No pending" && \
-	echo "" && echo "=== Pregen pending ===" && \
-	$(REDIS) redis-cli XPENDING tw:tile:stream:pregen tile-workers 2>/dev/null || echo "No pending"
+	$(REDIS) redis-cli -a devredis --no-auth-warning XINFO CONSUMERS tw:tile:stream:pregen tile-workers 2>/dev/null || echo "No consumers"
 
 tile-generate: ## Enqueue a tile for generation. Usage: make tile-generate SLOT=day Z=7 X=65 Y=33
 	@if [ -z "$(SLOT)" ] || [ -z "$(Z)" ] || [ -z "$(X)" ] || [ -z "$(Y)" ]; then \

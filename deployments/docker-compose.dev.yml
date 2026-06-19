@@ -25,13 +25,13 @@ services:
     image: redis:7-alpine
     container_name: trackwild-redis-dev
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --requirepass devredis --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
       - redisdata-dev:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "devredis", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -48,7 +48,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "postgresql+asyncpg://trackwild:trackwild@db:5432/trackwild"
-      REDIS_URL: "redis://redis:6379/0"
+      REDIS_URL: "redis://:devredis@redis:6379/0"
       TILE_CACHE_DIR: "/tile_cache"
       RISK_PROFILES_PATH: "/app/config/risk_profiles.json"
       TILE_WORKERS: "4"
