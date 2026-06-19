@@ -21,6 +21,21 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: trackwild-redis-dev
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata-dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   backend:
     build:
       context: ../backend
@@ -29,14 +44,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       DATABASE_URL: "postgresql+asyncpg://trackwild:trackwild@db:5432/trackwild"
+      REDIS_URL: "redis://redis:6379/0"
       TILE_CACHE_DIR: "/tile_cache"
       RISK_PROFILES_PATH: "/app/config/risk_profiles.json"
       TILE_WORKERS: "4"
       PREGEN_ENABLED: "true"
-      PREGEN_Z_MIN: "5"
-      PREGEN_Z_MAX: "10"
+      PREGEN_Z_MIN: "3"
+      PREGEN_Z_MAX: "12"
       PREGEN_BBOX: "28.0,65.5,42.0,71.5"
       LOG_LEVEL: debug
       SECRET_KEY: dev-secret-not-for-production
@@ -86,3 +104,4 @@ services:
 volumes:
   pgdata-dev:
   tile_cache-dev:
+  redisdata-dev:

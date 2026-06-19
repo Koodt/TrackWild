@@ -20,8 +20,6 @@ from rasterio.transform import from_bounds
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.risk_config import risk_config
-
 logger = logging.getLogger(__name__)
 
 TILE_SIZE = 256
@@ -132,13 +130,20 @@ def _rasterize_max(
 ) -> np.ndarray:
     """Rasterize GeoJSON shapes with suppressor support.
 
-    1. Rasterize positive shapes with max-merge (higher risk wins).
-    2. Rasterize negative shapes as suppressors — reduce risk, don't zero out.
-    3. final_risk = max(0, positive_risk - suppress_risk)
+    1. Rasterize positive risk (higher value wins on overlap).
+    2. Build a suppression mask from negative shapes — areas where
+       infrastructure dominates get their risk reduced proportionally.
+       A suppression value of 1.0 means the area is fully developed
+       (no wildlife risk at all).
+    3. final_risk = positive_risk * (1.0 - min(suppression, 1.0))
+
+    This means: inside a city centre (suppression ≈ 1.0), even if there's
+    a small park (risk 0.7), it becomes 0.7 * (1 - 1.0) = 0.
+    On the edge of town (suppression ≈ 0.5), the park shows as 0.35.
     """
     out = np.zeros((TILE_SIZE, TILE_SIZE), dtype=np.float32)
 
-    # Step 1: positive risk (max merge)
+    # Step 1: positive risk (max merge via sorted + rasterize)
     if positive_shapes:
         pos_sorted = sorted(positive_shapes, key=lambda item: item[1])
         out = rasterize(
@@ -150,17 +155,21 @@ def _rasterize_max(
             all_touched=True,
         )
 
-    # Step 2: suppressors — reduce risk, don't zero out
+    # Step 2: build suppression mask (max of all suppressors)
     if negative_shapes:
+        neg_sorted = sorted(negative_shapes, key=lambda item: item[1])
         suppress = rasterize(
-            zip((s[0] for s in negative_shapes), (s[1] for s in negative_shapes)),
+            zip((s[0] for s in neg_sorted), (s[1] for s in neg_sorted)),
             out_shape=(TILE_SIZE, TILE_SIZE),
             transform=transform,
             fill=0.0,
             dtype=np.float32,
             all_touched=True,
         )
-        out = np.clip(out - suppress, 0.0, None)
+        # Suppression is multiplicative: city park is not wild
+        # suppress values are clamped to [0, 1]
+        np.clip(suppress, 0.0, 1.0, out=suppress)
+        out = out * (1.0 - suppress)
 
     return out
 
@@ -275,10 +284,7 @@ async def generate_osm_tile_png(
         return None
 
     if not rows:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, _to_png, _empty_rgba(), transform
-        )
+        return None
 
     # Parse features — SQL already applied risk and buffer
     geojson_shapes = [json.loads(row["geojson"]) for row in rows]

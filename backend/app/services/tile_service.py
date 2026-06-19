@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import insert, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_factory
@@ -71,7 +71,7 @@ async def find_stale_tiles(ttl_hours: int = 24, limit: int = 100) -> list[tuple[
             text(
                 "SELECT time_slot, zoom, tile_x, tile_y "
                 "FROM tiles "
-                "WHERE generated_at < now() - (:ttl * interval '1 hour') "
+                "WHERE generated_at < now() - make_interval(hours => :ttl) "
                 "LIMIT :limit"
             ),
             {"ttl": ttl_hours, "limit": limit},

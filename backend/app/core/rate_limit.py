@@ -1,3 +1,10 @@
+"""Rate limiting for tile endpoints.
+
+In production, Caddy is the only client of the backend (internal network).
+Rate limiting should be done at the Caddy layer where real client IPs
+are visible. This middleware provides a safety net for direct access.
+"""
+
 import asyncio
 import logging
 import time
@@ -59,15 +66,20 @@ class RateLimiter:
         return True
 
 
-# 2000 tile requests per minute for production
+# 2000 tile requests per minute — safety net for direct access
 tile_rate_limiter = RateLimiter(max_requests=2000, window_seconds=60)
 
 
 class TileRateLimitMiddleware(BaseHTTPMiddleware):
     """Rate limit tile requests to prevent abuse.
 
-    Disabled entirely in development mode (ENV=development) — all traffic
-    comes through the reverse proxy, making IP-based limiting useless.
+    Caddy (reverse proxy) handles rate limiting in production based on
+    real client IPs. This middleware provides a safety net for direct
+    backend access.
+
+    In development mode (ENV=development), rate limiting is disabled
+    because all traffic comes through a local reverse proxy and the
+    X-Forwarded-For header does not contain a useful client identifier.
     """
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:

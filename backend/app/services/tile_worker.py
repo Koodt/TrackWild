@@ -1,36 +1,54 @@
-"""Background tile generation worker for FastAPI."""
+"""Background tile generation worker using Redis Streams for TrackWild."""
 
 import asyncio
 import logging
+import math
+import uuid
 from pathlib import Path
 from typing import Optional
 
 from app.core.config import settings
 from app.core.database import async_session_factory
-from app.services.tile_generator import _TRANSPARENT_PNG, generate_osm_tile_png
+from app.core.redis import get_redis
+from app.services.tile_generator import generate_osm_tile_png
+from app.services.tile_queue import (
+    DEDUP_SET_KEY,
+    ONDEMAND_STREAM,
+    PREGEN_STREAM,
+    TileQueue,
+    tile_queue,
+)
 from app.services.tile_service import find_stale_tiles, save_tile
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Worker state
+# Worker config
 # ---------------------------------------------------------------------------
-_queue: asyncio.Queue[tuple[str, int, int, int]] = asyncio.Queue()
-_semaphore = asyncio.Semaphore(settings.tile_workers)
-_pending: set[tuple[str, int, int, int]] = set()
+_CONSUMER_GROUP = "tile-workers"
+_CONSUMER_NAME = f"worker-{uuid.uuid4().hex[:8]}"
+_SEMAPHORE = asyncio.Semaphore(settings.tile_workers)
+_shutdown_event: asyncio.Event = asyncio.Event()
+
+# Background tasks
 _consume_task: Optional[asyncio.Task] = None
 _pregen_task: Optional[asyncio.Task] = None
 _stale_task: Optional[asyncio.Task] = None
 
+# ---------------------------------------------------------------------------
+# Tile processing
+# ---------------------------------------------------------------------------
 
 async def _process(time_slot: str, z: int, x: int, y: int) -> None:
-    key = (time_slot, z, x, y)
+    """Generate a single tile and save to cache + DB."""
     try:
         async with async_session_factory() as session:
             png_data = await generate_osm_tile_png(z, x, y, time_slot, session)
 
+        # Skip empty tiles — they waste space and get needlessly re-queued.
         if png_data is None:
-            png_data = _TRANSPARENT_PNG
+            logger.debug("Tile %s/%d/%d/%d is empty, skipping", time_slot, z, x, y)
+            return
 
         cache_path = (
             Path(settings.tile_cache_dir)
@@ -47,70 +65,120 @@ async def _process(time_slot: str, z: int, x: int, y: int) -> None:
         logger.info("Generated tile %s/%d/%d/%d", time_slot, z, x, y)
     except Exception:
         logger.exception("Tile generation failed for %s/%d/%d/%d", time_slot, z, x, y)
-    finally:
-        _pending.discard(key)
 
 
-async def _consume() -> None:
-    while True:
-        time_slot, z, x, y = await _queue.get()
+# ---------------------------------------------------------------------------
+# Consumer loop
+# ---------------------------------------------------------------------------
+
+async def _consume_loop() -> None:
+    """Read from Redis Streams and process tiles.
+
+    Priority: ondemand first, then pregen if ondemand is empty.
+    Uses XREADGROUP with BLOCK for efficient waiting.
+    """
+    r = await get_redis()
+    await _ensure_consumer_groups(r)
+
+    while not _shutdown_event.is_set():
         try:
-            async with _semaphore:
-                await _process(time_slot, z, x, y)
-        finally:
-            _queue.task_done()
+            # Try ondemand first
+            messages = await _read_from_stream(
+                r, ONDEMAND_STREAM, _CONSUMER_GROUP, _CONSUMER_NAME,
+            )
+            if not messages:
+                # Fall back to pregen
+                messages = await _read_from_stream(
+                    r, PREGEN_STREAM, _CONSUMER_GROUP, _CONSUMER_NAME,
+                )
+
+            if not messages:
+                continue
+
+            for stream_name, msg_id, fields in messages:
+                time_slot = fields.get("time_slot", "")
+                z = int(fields.get("z", 0))
+                x = int(fields.get("x", 0))
+                y = int(fields.get("y", 0))
+                is_pregen = stream_name == PREGEN_STREAM
+
+                await _SEMAPHORE.acquire()
+                asyncio.create_task(
+                    _worker_task(time_slot, z, x, y, msg_id, is_pregen),
+                )
+        except asyncio.CancelledError:
+            break
+        except TimeoutError:
+            continue
+        except Exception:
+            logger.exception("Error in consume loop")
+            await asyncio.sleep(1)
+
+
+async def _worker_task(
+    time_slot: str, z: int, x: int, y: int,
+    msg_id: str, is_pregen: bool,
+) -> None:
+    """Process a tile and ACK it in the stream."""
+    try:
+        await _process(time_slot, z, x, y)
+    finally:
+        r = await get_redis()
+        # Always ACK the message
+        await r.xack(ONDEMAND_STREAM if not is_pregen else PREGEN_STREAM,
+                      _CONSUMER_GROUP, msg_id)
+        # Remove from dedup set
+        await tile_queue.remove_dedup(time_slot, z, x, y)
+        # For pregen: decrement layer counter (always, even if tile was empty)
+        if is_pregen:
+            await tile_queue.decr_layer(z)
+        _SEMAPHORE.release()
+
+
+async def _read_from_stream(
+    r,  # aioredis.Redis
+    stream: str,
+    group: str,
+    consumer: str,
+    block_ms: int = 5000,
+) -> list:
+    """Read pending/new messages from a stream via XREADGROUP."""
+    try:
+        # '>' means only new (undelivered) messages
+        resp = await r.xreadgroup(
+            group, consumer, {stream: ">"}, count=10, block=block_ms,
+        )
+        if not resp:
+            return []
+        # resp: [(stream_name, [(msg_id, fields), ...])]
+        result = []
+        for stream_name, msg_list in resp:
+            for msg_id, fields in msg_list:
+                result.append((stream_name.decode() if isinstance(stream_name, bytes) else stream_name,
+                               msg_id, fields))
+        return result
+    except Exception as exc:
+        # No such group or no messages — not an error
+        if "NOGROUP" in str(exc) or "nil" in str(exc).lower():
+            return []
+        raise
+
+
+async def _ensure_consumer_groups(r) -> None:  # aioredis.Redis
+    """Create consumer groups if they don't exist."""
+    for stream in (ONDEMAND_STREAM, PREGEN_STREAM):
+        try:
+            await r.xgroup_create(stream, _CONSUMER_GROUP, id="0", mkstream=True)
+        except Exception as exc:
+            if "BUSYGROUP" in str(exc):
+                pass  # group already exists
+            else:
+                logger.warning("Could not create consumer group for %s: %s", stream, exc)
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Pre-generation with layer counters
 # ---------------------------------------------------------------------------
-def start_worker() -> None:
-    """Start the background consumer + pre-generator + stale checker tasks."""
-    global _consume_task, _pregen_task, _stale_task
-    if _consume_task is None or _consume_task.done():
-        _consume_task = asyncio.create_task(_consume())
-        logger.info("Tile consumer started")
-    if settings.pregen_enabled:
-        _pregen_task = asyncio.create_task(_pre_generate())
-        logger.info("Pre-generator started")
-    _stale_task = asyncio.create_task(_stale_checker())
-    logger.info("Stale tile checker started (TTL=%d hours)", settings.pregen_ttl_hours)
-
-
-async def stop_worker() -> None:
-    """Cancel all background tasks gracefully."""
-    global _consume_task, _pregen_task, _stale_task
-    for task in (_consume_task, _pregen_task, _stale_task):
-        if task and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-    _consume_task = None
-    _pregen_task = None
-    _stale_task = None
-    logger.info("Tile worker stopped")
-
-
-def enqueue(time_slot: str, z: int, x: int, y: int) -> None:
-    """Add a tile generation request to the queue (deduplicated)."""
-    key = (time_slot, z, x, y)
-    if key in _pending:
-        return
-    _pending.add(key)
-    _queue.put_nowait((time_slot, z, x, y))
-
-
-def queue_size() -> int:
-    """Return the current number of items in the queue."""
-    return _queue.qsize()
-
-
-# ---------------------------------------------------------------------------
-# Pre-generation helpers
-# ---------------------------------------------------------------------------
-import math
 
 # Time slots that need pre-generation
 TIME_SLOTS = ["night", "morning", "day", "evening"]
@@ -154,8 +222,16 @@ async def _pre_generate() -> None:
     if not settings.pregen_enabled:
         logger.info("Pre-generation disabled")
         return
+    if _shutdown_event.is_set():
+        return
+
+    r = await get_redis()
 
     for z in range(settings.pregen_z_min, settings.pregen_z_max + 1):
+        if _shutdown_event.is_set():
+            logger.info("Pre-generation interrupted at z=%d", z)
+            break
+
         tiles = _tiles_for_bbox(z)
         if not tiles:
             continue
@@ -166,20 +242,37 @@ async def _pre_generate() -> None:
             z, layer_total, len(tiles), len(TIME_SLOTS),
         )
 
+        # Set layer counter
+        await tile_queue.set_layer_total(z, layer_total)
+
         for time_slot in TIME_SLOTS:
             for x, y in tiles:
-                enqueue(time_slot, z, x, y)
+                await tile_queue.enqueue(time_slot, z, x, y, priority="pregen")
 
-        # Wait for this entire layer to finish before moving to next z
-        await _queue.join()
+        # Wait for this entire layer to finish via counter polling
+        while True:
+            if _shutdown_event.is_set():
+                logger.info("Pre-generation interrupted waiting for z=%d", z)
+                break
+            remaining = await tile_queue.get_layer_remaining(z)
+            if remaining is not None and remaining <= 0:
+                break
+            await asyncio.sleep(0.5)
+        else:
+            continue
+
         logger.info("Pre-gen layer z=%d: done", z)
 
     logger.info("Pre-generation complete (z=%d..%d)", settings.pregen_z_min, settings.pregen_z_max)
 
 
+# ---------------------------------------------------------------------------
+# Stale checker
+# ---------------------------------------------------------------------------
+
 async def _stale_checker() -> None:
     """Periodically check for stale tiles (older than TTL) and re-queue them."""
-    while True:
+    while not _shutdown_event.is_set():
         try:
             stale = await find_stale_tiles(
                 ttl_hours=settings.pregen_ttl_hours,
@@ -187,8 +280,52 @@ async def _stale_checker() -> None:
             )
             if stale:
                 for time_slot, z, x, y in stale:
-                    enqueue(time_slot, z, x, y)
-                logger.info("Stale check: re-queued %d tiles (TTL=%d hours)", len(stale), settings.pregen_ttl_hours)
+                    await tile_queue.enqueue(time_slot, z, x, y)
+                logger.info("Stale check: re-queued %d tiles (TTL=%d hours)",
+                            len(stale), settings.pregen_ttl_hours)
         except Exception:
             logger.exception("Stale check failed")
-        await asyncio.sleep(settings.pregen_stale_check_seconds)
+
+        # Sleep in small increments so we can respond to shutdown quickly
+        for _ in range(settings.pregen_stale_check_seconds * 2):
+            if _shutdown_event.is_set():
+                break
+            await asyncio.sleep(0.5)
+
+
+# ---------------------------------------------------------------------------
+# Public lifecycle API
+# ---------------------------------------------------------------------------
+
+def start_worker() -> None:
+    """Start the background consumer + pre-generator + stale checker tasks."""
+    global _consume_task, _pregen_task, _stale_task
+    _shutdown_event.clear()
+
+    if _consume_task is None or _consume_task.done():
+        _consume_task = asyncio.create_task(_consume_loop())
+        logger.info("Tile consumer started (consumer=%s)", _CONSUMER_NAME)
+    if settings.pregen_enabled and (_pregen_task is None or _pregen_task.done()):
+        _pregen_task = asyncio.create_task(_pre_generate())
+        logger.info("Pre-generator started")
+    if _stale_task is None or _stale_task.done():
+        _stale_task = asyncio.create_task(_stale_checker())
+        logger.info("Stale tile checker started (TTL=%d hours)", settings.pregen_ttl_hours)
+
+
+async def stop_worker() -> None:
+    """Cancel all background tasks gracefully."""
+    global _consume_task, _pregen_task, _stale_task
+    _shutdown_event.set()
+
+    for task in (_consume_task, _pregen_task, _stale_task):
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    _consume_task = None
+    _pregen_task = None
+    _stale_task = None
+    logger.info("Tile worker stopped")

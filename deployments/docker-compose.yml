@@ -22,6 +22,21 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: trackwild-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   backend:
     build:
       context: ../backend
@@ -30,16 +45,19 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+      REDIS_URL: "redis://redis:6379/0"
       TILE_CACHE_DIR: "/tile_cache"
       RISK_PROFILES_PATH: "/app/config/risk_profiles.json"
       TILE_WORKERS: ${TILE_WORKERS:-8}
       PREGEN_ENABLED: ${PREGEN_ENABLED:-true}
-      PREGEN_Z_MIN: ${PREGEN_Z_MIN:-5}
-      PREGEN_Z_MAX: ${PREGEN_Z_MAX:-10}
+      PREGEN_Z_MIN: ${PREGEN_Z_MIN:-3}
+      PREGEN_Z_MAX: ${PREGEN_Z_MAX:-12}
       PREGEN_BBOX: ${PREGEN_BBOX:-"28.0,65.5,42.0,71.5"}
       LOG_LEVEL: ${LOG_LEVEL}
       SECRET_KEY: ${SECRET_KEY}
@@ -111,6 +129,7 @@ services:
 volumes:
   pgdata:
   tile_cache:
+  redisdata:
   caddy_data:
   caddy_config:
 
