@@ -16,6 +16,7 @@ def json_or_list(value: str | list[str]) -> list[str]:
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/trackwild"
+    redis_url: str = "redis://redis:6379/0"
     tile_cache_dir: str = "/tile_cache"
     risk_profiles_path: str = "/app/config/risk_profiles.json"
     log_level: str = "info"

@@ -21,7 +21,7 @@ export default function App() {
       container: mapContainer.current,
       style: '/style.json',
       center: [31.2, 69.7],
-      zoom: 6,
+      zoom: 5,
     })
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
@@ -34,7 +34,7 @@ export default function App() {
           `/v1/tiles/${selectedTime}/{z}/{x}/{y}.png`,
         ],
         tileSize: 256,
-        minzoom: 6,
+        minzoom: 3,
         maxzoom: 14,
       })
 
@@ -65,6 +65,24 @@ export default function App() {
       }
     }
   }, [selectedTime])
+
+  // Periodically refresh the heatmap layer to pick up newly generated tiles.
+  // Pending tiles are returned as transparent PNGs with Cache-Control: no-cache,
+  // so MapLibre will re-request them on invalidation.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (mapRef.current?.isStyleLoaded()) {
+        const source = mapRef.current.getSource('heatmap') as maplibregl.RasterTileSource | undefined
+        if (source) {
+          // Force MapLibre to re-fetch all visible tiles
+          const tiles = source.tiles
+          source.setTiles([...tiles])
+        }
+      }
+    }, 10000) // every 10 seconds
+
+    return () => clearInterval(interval)
+  }, [])
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>

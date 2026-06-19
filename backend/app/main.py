@@ -9,6 +9,7 @@ from app.api.v1.router import router as v1_router
 from app.core.config import settings
 from app.core.database import engine, on_startup as db_on_startup
 from app.core.rate_limit import TileRateLimitMiddleware, tile_rate_limiter
+from app.core.redis import close_redis
 from app.services.tile_worker import start_worker, stop_worker
 
 
@@ -19,8 +20,9 @@ async def lifespan(app: FastAPI) -> Any:
     await tile_rate_limiter.start()
     start_worker()
     yield
-    stop_worker()
+    await stop_worker()
     await tile_rate_limiter.stop()
+    await close_redis()
     await engine.dispose()
 
 

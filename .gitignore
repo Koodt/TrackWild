@@ -22,20 +22,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Go
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-*.test
-*.out
-vendor/
-coverage.out
-cover.out
-backend-api/bin/
-backend-api/dist/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -53,8 +39,6 @@ venv/
 env/
 *.egg-info/
 .eggs/
-ml/.venv/
-workers/.venv/
 
 # Environment / Secrets
 .env
@@ -72,19 +56,9 @@ credentials/
 # Docker
 docker-compose.override.yml
 
-
 # Logs
 logs/
 *.log
-
-# Terraform (если появится)
-.terraform/
-*.tfstate
-*.tfstate.*
-crash.log
-
-# Kubernetes (если появится)
-*.kubeconfig
 
 # Local data
 tmp/
@@ -92,9 +66,6 @@ temp/
 data/
 uploads/
 storage/
-postgres-data/
-redis-data/
-minio-data/
 
 # Backend tile cache
 backend/tile_cache/
@@ -110,3 +81,7 @@ pbf/
 # Test artifacts
 playwright-report/
 test-results/
+
+# AI / agent tools
+.ai_agent_cache/
+.code-scalpel/
