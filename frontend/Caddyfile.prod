@@ -1,3 +1,11 @@
+# Global options
+{
+    acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+    persist_config {
+        data_dir /data
+    }
+}
+
 # HTTP → HTTPS redirect + ACME challenge
 http://trackwild.ru, http://www.trackwild.ru {
     redir https://{host}{uri} permanent
