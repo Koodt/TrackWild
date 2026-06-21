@@ -57,7 +57,7 @@ services:
       PREGEN_Z_MAX: "12"
       PREGEN_BBOX: "28.0,65.5,42.0,71.5"
       LOG_LEVEL: debug
-      SECRET_KEY: dev-secret-not-for-production
+      SECRET_KEY: ${SECRET_KEY}
       ENV: development
     volumes:
       - tile_cache-dev:/tile_cache

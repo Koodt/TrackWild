@@ -32,8 +32,8 @@ def upgrade() -> None:
             IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'osm_settlements') THEN
                 CREATE INDEX IF NOT EXISTS idx_osm_settlements_geom ON osm_settlements USING GIST (geometry);
             END IF;
-            IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'osm_waterways') THEN
-                CREATE INDEX IF NOT EXISTS idx_osm_waterways_geom ON osm_waterways USING GIST (geometry);
+            IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'osm_railways') THEN
+                CREATE INDEX IF NOT EXISTS idx_osm_railways_geom ON osm_railways USING GIST (geometry);
             END IF;
         END
         $$
@@ -44,4 +44,4 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_osm_roads_geom")
     op.execute("DROP INDEX IF EXISTS idx_osm_areas_geom")
     op.execute("DROP INDEX IF EXISTS idx_osm_settlements_geom")
-    op.execute("DROP INDEX IF EXISTS idx_osm_waterways_geom")
+    op.execute("DROP INDEX IF EXISTS idx_osm_railways_geom")
