@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import math
+import re
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -29,11 +30,21 @@ _CONSUMER_GROUP = "tile-workers"
 _CONSUMER_NAME = f"worker-{uuid.uuid4().hex[:8]}"
 _SEMAPHORE = asyncio.Semaphore(settings.tile_workers)
 _shutdown_event: asyncio.Event = asyncio.Event()
+_POLL_INTERVAL_S = 0.5
+
+# Regex to validate time_slot from stream fields (prevents path traversal)
+_TIME_SLOT_PATTERN = re.compile(r"[a-zA-Z0-9_]{1,30}")
 
 # Background tasks
 _consume_task: Optional[asyncio.Task] = None
 _pregen_task: Optional[asyncio.Task] = None
 _stale_task: Optional[asyncio.Task] = None
+
+
+def _decode_field(v) -> str:
+    """Decode Redis field value defensively (bytes → str)."""
+    return v.decode() if isinstance(v, bytes) else str(v)
+
 
 # ---------------------------------------------------------------------------
 # Tile processing
@@ -41,6 +52,10 @@ _stale_task: Optional[asyncio.Task] = None
 
 async def _process(time_slot: str, z: int, x: int, y: int) -> None:
     """Generate a single tile and save to cache + DB."""
+    # Validate time_slot to prevent path traversal
+    if not _TIME_SLOT_PATTERN.fullmatch(time_slot):
+        logger.warning("Invalid time_slot in queue message: %r, skipping", time_slot)
+        return
     try:
         async with async_session_factory() as session:
             png_data = await generate_osm_tile_png(z, x, y, time_slot, session)
@@ -81,11 +96,13 @@ async def _consume_loop() -> None:
     await _ensure_consumer_groups(r)
 
     while not _shutdown_event.is_set():
+        acquired = False
         try:
             # Acquire a slot BEFORE reading from the stream.
             # This guarantees we never pull messages without a free worker,
             # so messages can't get stuck as pending in Redis.
             await _SEMAPHORE.acquire()
+            acquired = True
             if _shutdown_event.is_set():
                 _SEMAPHORE.release()
                 break
@@ -104,22 +121,28 @@ async def _consume_loop() -> None:
 
             if messages:
                 stream_name, msg_id, fields = messages[0]
-                time_slot = fields.get("time_slot", "")
-                z = int(fields.get("z", 0))
-                x = int(fields.get("x", 0))
-                y = int(fields.get("y", 0))
+                time_slot = _decode_field(fields.get("time_slot", ""))
+                z = int(_decode_field(fields.get("z", 0)))
+                x = int(_decode_field(fields.get("x", 0)))
+                y = int(_decode_field(fields.get("y", 0)))
                 is_pregen = stream_name == PREGEN_STREAM
 
                 asyncio.create_task(
                     _worker_task(time_slot, z, x, y, msg_id, is_pregen),
                 )
+                acquired = False  # _worker_task owns the slot now
             else:
                 # No messages — release the slot and loop back to block.
                 _SEMAPHORE.release()
+                acquired = False
         except asyncio.CancelledError:
+            if acquired:
+                _SEMAPHORE.release()
             break
         except Exception:
             logger.exception("Error in consume loop")
+            if acquired:
+                _SEMAPHORE.release()
             await asyncio.sleep(1)
 
 
@@ -131,16 +154,20 @@ async def _worker_task(
     try:
         await _process(time_slot, z, x, y)
     finally:
-        r = await get_redis()
-        # Always ACK the message
-        await r.xack(ONDEMAND_STREAM if not is_pregen else PREGEN_STREAM,
-                      _CONSUMER_GROUP, msg_id)
-        # Remove from dedup set
-        await tile_queue.remove_dedup(time_slot, z, x, y)
-        # For pregen: decrement layer counter (always, even if tile was empty)
-        if is_pregen:
-            await tile_queue.decr_layer(z)
-        _SEMAPHORE.release()
+        try:
+            r = await get_redis()
+            # Remove from dedup set BEFORE ACK (ME-006)
+            await tile_queue.remove_dedup(time_slot, z, x, y)
+            # Always ACK the message
+            await r.xack(ONDEMAND_STREAM if not is_pregen else PREGEN_STREAM,
+                          _CONSUMER_GROUP, msg_id)
+            # For pregen: decrement layer counter (always, even if tile was empty)
+            if is_pregen:
+                await tile_queue.decr_layer(z)
+        except Exception:
+            logger.exception("ACK/dedup failed for %s/%d/%d/%d", time_slot, z, x, y)
+        finally:
+            _SEMAPHORE.release()  # ALWAYS release, even if ACK fails
 
 
 async def _read_from_stream(
@@ -183,6 +210,20 @@ async def _ensure_consumer_groups(r) -> None:  # aioredis.Redis
                 pass  # group already exists
             else:
                 logger.warning("Could not create consumer group for %s: %s", stream, exc)
+
+
+async def _claim_orphaned_messages(r) -> None:
+    """Recover pending messages from dead consumers (min idle: 5 minutes)."""
+    for stream in (ONDEMAND_STREAM, PREGEN_STREAM):
+        try:
+            result = await r.xautoclaim(stream, _CONSUMER_GROUP, _CONSUMER_NAME,
+                                         min_idle_time=300_000, start_id="0-0")
+            claimed = result[1] if len(result) > 1 else []
+            if claimed:
+                logger.info("Recovered %d orphaned messages from %s", len(claimed), stream)
+        except Exception as exc:
+            if "NOGROUP" not in str(exc):
+                logger.warning("XAUTOCLAIM failed for %s: %s", stream, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +309,7 @@ async def _pre_generate() -> None:
             remaining = await tile_queue.get_layer_remaining(z)
             if remaining is not None and remaining <= 0:
                 break
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(_POLL_INTERVAL_S)
 
         logger.info("Pre-gen layer z=%d: done", z)
 
@@ -296,10 +337,19 @@ async def _stale_checker() -> None:
             logger.exception("Stale check failed")
 
         # Sleep in small increments so we can respond to shutdown quickly
-        for _ in range(settings.pregen_stale_check_seconds * 2):
+        for _ in range(int(settings.pregen_stale_check_seconds / _POLL_INTERVAL_S)):
             if _shutdown_event.is_set():
                 break
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(_POLL_INTERVAL_S)
+
+
+async def _recover_orphans() -> None:
+    """Called once at startup to claim orphaned pending messages."""
+    try:
+        r = await get_redis()
+        await _claim_orphaned_messages(r)
+    except Exception:
+        logger.exception("Failed to recover orphaned messages at startup")
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +370,9 @@ def start_worker() -> None:
     if _stale_task is None or _stale_task.done():
         _stale_task = asyncio.create_task(_stale_checker())
         logger.info("Stale tile checker started (TTL=%d hours)", settings.pregen_ttl_hours)
+
+    # Recover orphaned messages from dead consumers
+    asyncio.create_task(_recover_orphans())
 
 
 async def stop_worker() -> None:

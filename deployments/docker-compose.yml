@@ -58,7 +58,7 @@ services:
       PREGEN_ENABLED: ${PREGEN_ENABLED:-true}
       PREGEN_Z_MIN: ${PREGEN_Z_MIN:-3}
       PREGEN_Z_MAX: ${PREGEN_Z_MAX:-12}
-      PREGEN_BBOX: ${PREGEN_BBOX:-"28.0,65.5,42.0,71.5"}
+      PREGEN_BBOX: ${PREGEN_BBOX:-28.0,65.5,42.0,71.5}
       LOG_LEVEL: ${LOG_LEVEL}
       SECRET_KEY: ${SECRET_KEY}
       ENV: production

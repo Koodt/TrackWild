@@ -15,7 +15,6 @@ record into the ``bear_observations`` table.  Duplicates are ignored via
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -105,8 +104,8 @@ async def download_and_ingest(session: AsyncSession) -> int:
                 break
 
             records = [_parse_gbif_record(r) for r in results]
-            # Filter out records without coordinates (shouldn't happen with hasCoordinate=true)
-            records = [r for r in records if r["lat"] is not None and r["lon"] is not None]
+            # Filter out records without valid numeric coordinates
+            records = [r for r in records if isinstance(r.get("lat"), (int, float)) and isinstance(r.get("lon"), (int, float))]
 
             if records:
                 await session.execute(upsert_sql, records)

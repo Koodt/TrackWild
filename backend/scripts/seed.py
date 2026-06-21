@@ -20,7 +20,7 @@ async def seed_risk_profiles(session: AsyncSession) -> None:
         print(f"Warning: {config_path} not found, skipping seed")
         return
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         profiles = json.load(f)
 
     for prof in profiles:

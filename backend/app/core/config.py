@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["https://trackwild.ru", "https://www.trackwild.ru"]
     secret_key: str = "change-me"
     env: str = "production"
+    admin_secret: str = ""
 
     # Pre-generation settings
     tile_workers: int = 2
@@ -31,6 +32,12 @@ class Settings(BaseSettings):
     pregen_z_max: int = 7
     # Bbox for NW Federal District in EPSG:4326 (min_lon, min_lat, max_lon, max_lat)
     pregen_bbox: str = "28.0,65.5,42.0,71.5"
+
+    @field_validator("pregen_bbox")
+    @classmethod
+    def strip_bbox_quotes(cls, v: str) -> str:
+        """Strip surrounding quotes that Docker Compose may inject."""
+        return v.strip('"').strip("'")
     # Stale tile re-generation
     pregen_ttl_hours: int = 24
     pregen_stale_check_seconds: int = 300
@@ -65,6 +72,15 @@ class Settings(BaseSettings):
         v = v.lower()
         if v not in allowed:
             raise ValueError(f"Invalid log level: {v}, must be one of {allowed}")
+        return v
+
+    @field_validator("env")
+    @classmethod
+    def validate_env(cls, v: str) -> str:
+        allowed = {"development", "staging", "production"}
+        v = v.lower().strip()
+        if v not in allowed:
+            raise ValueError(f"Invalid env '{v}', must be one of {allowed}")
         return v
 
 
