@@ -25,6 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 TILE_SIZE = 256
+_ALPHA_THRESHOLD = 0.15
+_M_PER_DEGREE_LAT = 111_320.0
 
 # --- removed: unconditional BEAR_BASELINE_RISK filler ---
 # Previously every pixel that had no OSM feature was painted green,
@@ -315,7 +317,7 @@ def _colormap(risk: np.ndarray) -> np.ndarray:
     rgba[0] = (np.clip(v * 2, 0, 1) * 255).astype(np.uint8)   # red
     rgba[1] = (np.clip(2 - v * 2, 0, 1) * 255).astype(np.uint8)  # green
     rgba[2] = 0                                                   # blue
-    rgba[3] = (v > 0.15).astype(np.uint8) * 255                 # alpha
+    rgba[3] = (v > _ALPHA_THRESHOLD).astype(np.uint8) * 255     # alpha
     return rgba
 
 
@@ -323,19 +325,17 @@ def _to_png(rgba: np.ndarray, transform) -> bytes:
     """Write RGBA array to PNG bytes via rasterio."""
     import rasterio.io
 
-    buf = rasterio.io.MemoryFile()
-    with buf.open(
-        driver="PNG",
-        height=TILE_SIZE,
-        width=TILE_SIZE,
-        count=4,
-        dtype=np.uint8,
-        transform=transform,
-    ) as ds:
-        ds.write(rgba)
-    data = buf.read()
-    buf.close()
-    return data
+    with rasterio.io.MemoryFile() as buf:
+        with buf.open(
+            driver="PNG",
+            height=TILE_SIZE,
+            width=TILE_SIZE,
+            count=4,
+            dtype=np.uint8,
+            transform=transform,
+        ) as ds:
+            ds.write(rgba)
+        return buf.read()
 
 
 @functools.lru_cache(maxsize=1)
@@ -347,29 +347,40 @@ def _get_transparent_png() -> bytes:
     """
     import rasterio.io
 
-    buf = rasterio.io.MemoryFile()
-    with buf.open(
-        driver="PNG",
-        height=TILE_SIZE,
-        width=TILE_SIZE,
-        count=4,
-        dtype=np.uint8,
-        transform=from_bounds(0, 0, TILE_SIZE, TILE_SIZE, TILE_SIZE, TILE_SIZE),
-    ) as ds:
-        ds.write(_empty_rgba())
-    data = buf.read()
-    buf.close()
-    return data
+    with rasterio.io.MemoryFile() as buf:
+        with buf.open(
+            driver="PNG",
+            height=TILE_SIZE,
+            width=TILE_SIZE,
+            count=4,
+            dtype=np.uint8,
+            transform=from_bounds(0, 0, TILE_SIZE, TILE_SIZE, TILE_SIZE, TILE_SIZE),
+        ) as ds:
+            ds.write(_empty_rgba())
+        return buf.read()
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+# Cached flag for OSM table existence check (ME-001)
+_osm_tables_exists: bool | None = None
+_osm_tables_checked_at: float = 0.0
+_OSM_TABLES_CACHE_TTL = 300.0  # recheck every 5 minutes
+
+
 async def _has_osm_tables(session: AsyncSession) -> bool:
     """Return True if all required OSM tables exist in public schema.
 
     Required tables: osm_roads, osm_areas, osm_settlements, osm_railways.
+    Cached with a 5-minute TTL so that OSM re-imports are eventually picked up
+    without per-tile information_schema queries.
     """
+    global _osm_tables_exists, _osm_tables_checked_at
+    import time as _time
+    now = _time.monotonic()
+    if _osm_tables_exists is not None and (now - _osm_tables_checked_at) < _OSM_TABLES_CACHE_TTL:
+        return _osm_tables_exists
     stmt = text("""
         SELECT COUNT(*) = 4
         FROM information_schema.tables
@@ -377,7 +388,9 @@ async def _has_osm_tables(session: AsyncSession) -> bool:
           AND table_name IN ('osm_roads', 'osm_areas', 'osm_settlements', 'osm_railways')
     """)
     result = await session.execute(stmt)
-    return bool(result.scalar_one_or_none())
+    _osm_tables_exists = bool(result.scalar_one_or_none())
+    _osm_tables_checked_at = now
+    return _osm_tables_exists
 
 
 async def generate_osm_tile_png(
@@ -423,16 +436,21 @@ async def generate_osm_tile_png(
         min_lon, max_lat = _mercator_to_lonlat(left, top)
         max_lon, min_lat = _mercator_to_lonlat(right, bottom)
         radius = _bear_area_radius(z)
-        # Pad bounding box by radius in degrees (~111km per degree)
-        pad_deg = max(radius / 111_320.0, 0.01)
+
+        # Pad bounding box separately for lat and lon.
+        # Longitude degrees shrink at high latitudes — a single pad_deg
+        # would be too small east/west at 70°N (HI-002).
+        center_lat = (min_lat + max_lat) / 2.0
+        pad_lat = max(radius / _M_PER_DEGREE_LAT, 0.01)
+        pad_lon = max(radius / (_M_PER_DEGREE_LAT * math.cos(math.radians(center_lat))), 0.01)
 
         bear_result = await session.execute(
             _BEAR_GEOJSON_SQL,
             {
-                "min_lon": min_lon - pad_deg,
-                "max_lon": max_lon + pad_deg,
-                "min_lat": max(min_lat - pad_deg, -90.0),
-                "max_lat": min(max_lat + pad_deg, 90.0),
+                "min_lon": min_lon - pad_lon,
+                "max_lon": max_lon + pad_lon,
+                "min_lat": max(min_lat - pad_lat, -90.0),
+                "max_lat": min(max_lat + pad_lat, 90.0),
             },
         )
         for row in bear_result.mappings().all():

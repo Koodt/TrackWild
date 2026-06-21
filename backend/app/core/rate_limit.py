@@ -94,10 +94,12 @@ class TileRateLimitMiddleware(BaseHTTPMiddleware):
         if not forwarded:
             return await call_next(request)
 
-        client_ip = forwarded.split(",")[0].strip()
+        # Last hop = closest proxy (added by our known reverse proxy, Caddy).
+        # Earlier hops can be spoofed by the client.
+        client_ip = forwarded.split(",")[-1].strip()
 
-        # Skip rate limiting for internal networks (Docker, LAN)
-        if client_ip.startswith(("10.", "172.", "192.168.", "127.")):
+        # Only skip rate limiting for loopback (internal health checks)
+        if client_ip == "127.0.0.1" or client_ip == "::1":
             return await call_next(request)
 
         if not tile_rate_limiter.is_allowed(client_ip):

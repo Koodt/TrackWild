@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import math
 import shutil
@@ -76,6 +75,7 @@ async def find_stale_tiles(ttl_hours: int = 24, limit: int = 100) -> list[tuple[
                 "SELECT time_slot, zoom, tile_x, tile_y "
                 "FROM tiles "
                 "WHERE generated_at < now() - make_interval(hours => :ttl) "
+                "ORDER BY generated_at ASC "
                 "LIMIT :limit"
             ),
             {"ttl": ttl_hours, "limit": limit},
