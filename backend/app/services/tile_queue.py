@@ -5,6 +5,7 @@ plus status/query helpers for the API layer.
 """
 
 import logging
+from typing import Dict
 
 import redis.asyncio as aioredis
 
@@ -89,35 +90,46 @@ class TileQueue:
         )
         return result  # type: ignore[return-value]
 
-    async def queue_size(self) -> dict:
+    async def queue_size(self) -> Dict[str, int]:
         """Return queue statistics.
 
+        Note: The ``*_approx`` keys come from ``XLEN``, which returns the
+        total number of entries in the stream including already-ACKed
+        messages that haven't been trimmed yet. The values are approximations,
+        not exact pending counts.
+
         Returns:
-            Dict with ondemand_queued, ondemand_inflight,
-            pregen_queued, pregen_inflight, pending_dedup_set.
+            Dict with ondemand_approx, ondemand_inflight,
+            pregen_approx, pregen_inflight, pending_dedup_set.
         """
         r = await get_redis()
         ondemand_len = await r.xlen(ONDEMAND_STREAM)
         pregen_len = await r.xlen(PREGEN_STREAM)
         dedup_len = await r.scard(DEDUP_SET_KEY)
 
-        # Inflight = pending in dedup set but not yet in any stream
-        # (approximate: dedup set size minus sum of stream lengths)
-        queued_total = ondemand_len + pregen_len
-        inflight_approx = max(0, dedup_len - queued_total)
-
-        # Split inflight between ondemand and pregen proportionally
-        if queued_total > 0:
-            ondemand_inflight = int(inflight_approx * ondemand_len / queued_total)
-            pregen_inflight = inflight_approx - ondemand_inflight
-        else:
-            ondemand_inflight = 0
-            pregen_inflight = 0
+        # Inflight = messages delivered but not yet ACKed, via XPENDING
+        ondemand_inflight = 0
+        pregen_inflight = 0
+        _CONSUMER_GROUP_INTERNAL = "tile-workers"
+        try:
+            ondemand_pending = await r.xpending(
+                ONDEMAND_STREAM, _CONSUMER_GROUP_INTERNAL,
+            )
+            ondemand_inflight = ondemand_pending.get("pending", 0) or 0
+        except Exception:
+            pass
+        try:
+            pregen_pending = await r.xpending(
+                PREGEN_STREAM, _CONSUMER_GROUP_INTERNAL,
+            )
+            pregen_inflight = pregen_pending.get("pending", 0) or 0
+        except Exception:
+            pass
 
         return {
-            "ondemand_queued": ondemand_len,
+            "ondemand_approx": ondemand_len,
             "ondemand_inflight": ondemand_inflight,
-            "pregen_queued": pregen_len,
+            "pregen_approx": pregen_len,
             "pregen_inflight": pregen_inflight,
             "pending_dedup_set": dedup_len,
         }
@@ -158,6 +170,42 @@ class TileQueue:
         r = await get_redis()
         dedup_key = f"{time_slot}:{z}:{x}:{y}"
         await r.srem(DEDUP_SET_KEY, dedup_key)
+
+    async def clear_all(self) -> dict:
+        """Clear Redis streams, dedup set, and layer counters.
+
+        Returns dict with keys: ondemand_trimmed, pregen_trimmed, dedup_removed, layers_removed
+        """
+        r = await get_redis()
+
+        # Get counts before clearing
+        ondemand_len = await r.xlen(ONDEMAND_STREAM)
+        pregen_len = await r.xlen(PREGEN_STREAM)
+        dedup_len = await r.scard(DEDUP_SET_KEY)
+
+        # Find and delete all layer counter keys
+        layer_keys = await r.keys("tw:tile:pregen:layer:*")
+
+        # Use pipeline for atomic batch deletion
+        pipe = r.pipeline()
+        pipe.delete(DEDUP_SET_KEY)
+        pipe.delete(ONDEMAND_STREAM)
+        pipe.delete(PREGEN_STREAM)
+        if layer_keys:
+            pipe.delete(*layer_keys)
+        await pipe.execute()
+
+        logger.info(
+            "Cleared tile queue: ondemand=%d, pregen=%d, dedup=%d, layers=%d",
+            ondemand_len, pregen_len, dedup_len, len(layer_keys),
+        )
+
+        return {
+            "ondemand_trimmed": ondemand_len,
+            "pregen_trimmed": pregen_len,
+            "dedup_removed": dedup_len,
+            "layers_removed": len(layer_keys),
+        }
 
 
 # Singleton instance

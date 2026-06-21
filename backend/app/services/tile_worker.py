@@ -82,34 +82,42 @@ async def _consume_loop() -> None:
 
     while not _shutdown_event.is_set():
         try:
-            # Try ondemand first
+            # Acquire a slot BEFORE reading from the stream.
+            # This guarantees we never pull messages without a free worker,
+            # so messages can't get stuck as pending in Redis.
+            await _SEMAPHORE.acquire()
+            if _shutdown_event.is_set():
+                _SEMAPHORE.release()
+                break
+
+            # Try ondemand first, then pregen as fallback.
+            # count=1 because we already hold exactly one slot.
             messages = await _read_from_stream(
                 r, ONDEMAND_STREAM, _CONSUMER_GROUP, _CONSUMER_NAME,
+                count=1,
             )
             if not messages:
-                # Fall back to pregen
                 messages = await _read_from_stream(
                     r, PREGEN_STREAM, _CONSUMER_GROUP, _CONSUMER_NAME,
+                    count=1,
                 )
 
-            if not messages:
-                continue
-
-            for stream_name, msg_id, fields in messages:
+            if messages:
+                stream_name, msg_id, fields = messages[0]
                 time_slot = fields.get("time_slot", "")
                 z = int(fields.get("z", 0))
                 x = int(fields.get("x", 0))
                 y = int(fields.get("y", 0))
                 is_pregen = stream_name == PREGEN_STREAM
 
-                await _SEMAPHORE.acquire()
                 asyncio.create_task(
                     _worker_task(time_slot, z, x, y, msg_id, is_pregen),
                 )
+            else:
+                # No messages — release the slot and loop back to block.
+                _SEMAPHORE.release()
         except asyncio.CancelledError:
             break
-        except TimeoutError:
-            continue
         except Exception:
             logger.exception("Error in consume loop")
             await asyncio.sleep(1)
@@ -141,12 +149,13 @@ async def _read_from_stream(
     group: str,
     consumer: str,
     block_ms: int = 5000,
+    count: int = 10,
 ) -> list:
     """Read pending/new messages from a stream via XREADGROUP."""
     try:
         # '>' means only new (undelivered) messages
         resp = await r.xreadgroup(
-            group, consumer, {stream: ">"}, count=10, block=block_ms,
+            group, consumer, {stream: ">"}, count=count, block=block_ms,
         )
         if not resp:
             return []
@@ -180,8 +189,10 @@ async def _ensure_consumer_groups(r) -> None:  # aioredis.Redis
 # Pre-generation with layer counters
 # ---------------------------------------------------------------------------
 
-# Time slots that need pre-generation
-TIME_SLOTS = ["night", "morning", "day", "evening"]
+# Time slots that need pre-generation.
+# Currently only "day" is supported — multi-slot support is disabled
+# to reduce tile-generation load.
+TIME_SLOTS = ["day"]
 
 
 def _latlon_to_tile(lat_deg: float, lon_deg: float, zoom: int) -> tuple[int, int]:
@@ -258,8 +269,6 @@ async def _pre_generate() -> None:
             if remaining is not None and remaining <= 0:
                 break
             await asyncio.sleep(0.5)
-        else:
-            continue
 
         logger.info("Pre-gen layer z=%d: done", z)
 
