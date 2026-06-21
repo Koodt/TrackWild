@@ -145,16 +145,9 @@ combined AS (
     SELECT geom, risk FROM settlements
     UNION ALL
     SELECT geom, risk FROM railways
-),
-grouped AS (
-    SELECT ST_Union(geom) AS geom, risk
-    FROM combined
-    WHERE geom IS NOT NULL
-      AND NOT ST_IsEmpty(geom)
-    GROUP BY risk
 )
 SELECT ST_AsGeoJSON(geom) AS geojson, risk
-FROM grouped
+FROM combined
 WHERE geom IS NOT NULL
   AND NOT ST_IsEmpty(geom)
 """)
